@@ -27,7 +27,7 @@ if ! pgrep -x "cloudflared" > /dev/null; then
     sleep 5
 fi
 
-TUNNEL_URL=$(grep -o 'https://[a-zA-Z0-9-]\+\.trycloudflare\.com' /tmp/tunnel.log 2>/dev/null | tail -n 1)
+TUNNEL_URL=$(grep -a -o 'https://[a-zA-Z0-9-]\+\.trycloudflare\.com' /tmp/tunnel.log 2>/dev/null | tail -n 1)
 echo "✅ Cloudflare Tunnel Gateway: ${TUNNEL_URL:-https://practical-hundreds-console-payment.trycloudflare.com}"
 
 # 3. Start Local Web Server for Claude UI

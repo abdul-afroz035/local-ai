@@ -16,15 +16,35 @@ export const SYSTEM_PROMPTS = PRESET_SYSTEM_PROMPTS;
 
 export const CONFIG = {
   getBackendUrl() {
-    const saved = localStorage.getItem('backend_url');
-    if (!saved || (saved.includes('trycloudflare.com') && saved !== ACTIVE_TUNNEL_URL)) {
+    const isLocalhost = typeof window !== 'undefined' && 
+      (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+    
+    const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('backend_url') : null;
+    
+    // If on public HTTPS (e.g. Vercel), http://127.0.0.1 is blocked by browser Mixed Content rules
+    if (!isLocalhost && saved && (saved.startsWith('http://127.0.0.1') || saved.startsWith('http://localhost'))) {
       localStorage.setItem('backend_url', ACTIVE_TUNNEL_URL);
       return ACTIVE_TUNNEL_URL;
     }
-    return saved;
+    
+    // If tunnel URL changed, update stale tunnel URL
+    if (saved && saved.includes('trycloudflare.com') && saved !== ACTIVE_TUNNEL_URL) {
+      localStorage.setItem('backend_url', ACTIVE_TUNNEL_URL);
+      return ACTIVE_TUNNEL_URL;
+    }
+    
+    if (saved) return saved;
+    
+    const defaultUrl = isLocalhost ? LOCAL_BACKEND_URL : ACTIVE_TUNNEL_URL;
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('backend_url', defaultUrl);
+    }
+    return defaultUrl;
   },
   setBackendUrl(url) {
-    localStorage.setItem('backend_url', url.replace(/\/+$/, ''));
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('backend_url', url.replace(/\/+$/, ''));
+    }
   },
   getApiUrl() {
     return this.getBackendUrl();

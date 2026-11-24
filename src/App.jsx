@@ -320,7 +320,7 @@ export function App() {
                 ...msgs[targetAiIdx],
                 content:
                   msgs[targetAiIdx].content ||
-                  `⚠️ Error: Could not reach Ollama at ${backendUrl}. Ensure local Ollama or the Cloudflare tunnel is active.`,
+                  `⚠️ Connection Error: ${err.message || 'Could not reach backend at ' + backendUrl}. Check your Gateway URL in Settings (⚙️). If accessing from Vercel, ensure the Cloudflare Tunnel is active.`,
               };
             }
             return { ...s, messages: msgs };

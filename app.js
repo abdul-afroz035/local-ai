@@ -17,7 +17,7 @@ const PRESET_SYSTEM_PROMPTS = {
 const CONFIG = {
   getBackendUrl() {
     const saved = localStorage.getItem('backend_url');
-    if (!saved || (saved.includes('trycloudflare.com') && !saved.includes('timber-duration-qualification-realtors'))) {
+    if (!saved || (saved.includes('trycloudflare.com') && saved !== ACTIVE_TUNNEL_URL)) {
       localStorage.setItem('backend_url', ACTIVE_TUNNEL_URL);
       return ACTIVE_TUNNEL_URL;
     }

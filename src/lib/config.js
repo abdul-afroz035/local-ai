@@ -1,4 +1,4 @@
-export const ACTIVE_TUNNEL_URL = 'https://alien-metal-hawk-wishing.trycloudflare.com';
+export const ACTIVE_TUNNEL_URL = 'https://locate-convergence-pace-pine.trycloudflare.com';
 export const LOCAL_BACKEND_URL = 'http://127.0.0.1:11434';
 
 export const PRESET_SYSTEM_PROMPTS = {

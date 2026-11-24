@@ -148,7 +148,14 @@ export function SettingsModal({
                 <Sparkles className="w-4 h-4 text-claude-accent" />
                 System Persona & Directives
               </label>
-              <div className="flex gap-1.5">
+              <div className="flex gap-1.5 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => setPrompt(SYSTEM_PROMPTS.HERMES)}
+                  className="text-[11px] px-2 py-0.5 rounded bg-claude-coral/10 hover:bg-claude-coral/20 text-claude-coral border border-claude-coral/30 font-medium transition-colors"
+                >
+                  Hermes Agent
+                </button>
                 <button
                   type="button"
                   onClick={() => setPrompt(SYSTEM_PROMPTS.UNRESTRICTED)}

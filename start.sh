@@ -30,12 +30,19 @@ fi
 TUNNEL_URL=$(grep -a -o 'https://[a-zA-Z0-9-]\+\.trycloudflare\.com' /tmp/tunnel.log 2>/dev/null | tail -n 1)
 echo "✅ Cloudflare Tunnel Gateway: ${TUNNEL_URL:-https://practical-hundreds-console-payment.trycloudflare.com}"
 
-# 3. Start Local Web Server for Claude UI
+# 3. Start Local Web Server for React Claude UI
 PORT=3000
-echo "✅ Launching Claude Web UI on http://localhost:$PORT..."
+echo "✅ Launching React Claude Web UI on http://localhost:$PORT..."
 pkill -f "python3 -m http.server $PORT" 2>/dev/null
-nohup python3 -m http.server $PORT --directory "$DIR" > /tmp/webui.log 2>&1 &
-sleep 1
+pkill -f "vite preview --port $PORT" 2>/dev/null
+pkill -f "bun.*$PORT" 2>/dev/null
+
+if [ -f "/opt/homebrew/bin/bun" ]; then
+    nohup /opt/homebrew/bin/bun run preview --port $PORT > /tmp/webui.log 2>&1 &
+else
+    nohup npx vite preview --port $PORT > /tmp/webui.log 2>&1 &
+fi
+sleep 2
 
 # Open in default browser
 open "http://localhost:$PORT"

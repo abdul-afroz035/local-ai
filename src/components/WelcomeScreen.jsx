@@ -30,9 +30,9 @@ export default function WelcomeScreen({ onSelectPrompt }) {
     },
     {
       icon: Layers,
-      category: 'Analyze & Plan',
-      title: 'Autonomous agent architecture',
-      prompt: 'Analyze this prompt and design a complete architecture for an autonomous background AI agent.'
+      category: 'Hermes Agent',
+      title: 'Autonomous agent harness',
+      prompt: 'Act as the Hermes Agent. Design an autonomous execution loop with persistent SQLite memory, shell tools, and error-recovery.'
     }
   ];
 

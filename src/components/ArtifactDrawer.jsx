@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { X, Copy, Check, Download, Code2 } from 'lucide-react';
-import hljs from 'highlight.js';
+import { copyToClipboard, hljs } from '../lib/markdown';
 
 export default function ArtifactDrawer({
   isOpen,
@@ -17,10 +17,12 @@ export default function ArtifactDrawer({
     }
   }, [code, isOpen]);
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+  const handleCopy = async () => {
+    const ok = await copyToClipboard(code);
+    if (ok) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }
   };
 
   const handleDownload = () => {

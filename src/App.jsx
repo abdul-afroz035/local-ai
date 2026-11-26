@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { ArrowDown } from 'lucide-react';
 import { CONFIG, SYSTEM_PROMPTS } from './lib/config';
 import { fetchModels, streamChatCompletion } from './lib/api';
 import Sidebar from './components/Sidebar';
@@ -48,10 +49,13 @@ export function App() {
     return localStorage.getItem(ACTIVE_SESSION_ID_KEY) || null;
   });
 
-  // Active generating state
+  // Active generating state & refs
   const [isGenerating, setIsGenerating] = useState(false);
+  const [showScrollButton, setShowScrollButton] = useState(false);
   const abortControllerRef = useRef(null);
-  const messagesEndRef = useRef(null);
+  const activeStreamingRef = useRef({ sessionId: null, msgId: null });
+  const scrollContainerRef = useRef(null);
+  const isNearBottomRef = useRef(true);
 
   // Artifact Drawer state
   const [artifact, setArtifact] = useState({
@@ -65,8 +69,10 @@ export function App() {
     const root = document.documentElement;
     if (theme === 'dark') {
       root.classList.add('dark');
+      root.classList.remove('light');
     } else {
       root.classList.remove('dark');
+      root.classList.add('light');
     }
     localStorage.setItem('claude_theme', theme);
   }, [theme]);
@@ -86,26 +92,105 @@ export function App() {
   }, [currentSessionId]);
 
   // Fetch models & check backend status
-  const refreshBackendModels = async () => {
+  const refreshBackendModels = useCallback(async () => {
     const fetched = await fetchModels(backendUrl);
     if (fetched && fetched.length > 0) {
       setModels(fetched);
       setIsOnline(true);
-      const exists = fetched.some((m) => m.name === activeModel);
+      const exists = fetched.some((m) => m.name === activeModel || m.id === activeModel);
       if (!exists && fetched[0]) {
-        setActiveModel(fetched[0].name);
-        CONFIG.setModel(fetched[0].name);
+        const firstModel = fetched[0].name || fetched[0].id;
+        setActiveModel(firstModel);
+        CONFIG.setModel(firstModel);
       }
     } else {
       setIsOnline(false);
     }
-  };
+  }, [backendUrl, activeModel]);
 
   useEffect(() => {
     refreshBackendModels();
     const interval = setInterval(refreshBackendModels, 30000);
     return () => clearInterval(interval);
-  }, [backendUrl]);
+  }, [refreshBackendModels]);
+
+  // Active session object
+  const currentSession = sessions.find((s) => s.id === currentSessionId) || null;
+  const currentMessages = currentSession?.messages || [];
+
+  // Smart scroll handler: track whether user manually scrolled upward
+  const handleScroll = useCallback(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const nearBottom = distanceFromBottom < 90;
+    isNearBottomRef.current = nearBottom;
+    setShowScrollButton(!nearBottom && el.scrollHeight > el.clientHeight + 100);
+  }, []);
+
+  const scrollToBottom = useCallback((behavior = 'auto') => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    isNearBottomRef.current = true;
+    setShowScrollButton(false);
+    el.scrollTo({ top: el.scrollHeight, behavior });
+  }, []);
+
+  // Auto-scroll only when user is already near the bottom
+  useEffect(() => {
+    if (isNearBottomRef.current && scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
+    }
+  }, [currentMessages, isGenerating]);
+
+  // Reset scroll position to bottom when switching sessions
+  useEffect(() => {
+    isNearBottomRef.current = true;
+    setShowScrollButton(false);
+    requestAnimationFrame(() => {
+      if (scrollContainerRef.current) {
+        scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
+      }
+    });
+  }, [currentSessionId]);
+
+  const handleStopGeneration = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    const { sessionId, msgId } = activeStreamingRef.current;
+    if (sessionId && msgId) {
+      setSessions((prev) =>
+        prev.map((s) => {
+          if (s.id !== sessionId) return s;
+          return {
+            ...s,
+            messages: s.messages.map((m) =>
+              m.id === msgId ? { ...m, stopped: true } : m
+            ),
+          };
+        })
+      );
+    }
+    activeStreamingRef.current = { sessionId: null, msgId: null };
+    setIsGenerating(false);
+  }, []);
+
+  const handleNewChat = useCallback(() => {
+    if (isGenerating) {
+      handleStopGeneration();
+    }
+    const newSession = {
+      id: 'session_' + Date.now(),
+      title: 'New Conversation',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      messages: [],
+    };
+    setSessions((prev) => [newSession, ...prev]);
+    setCurrentSessionId(newSession.id);
+  }, [isGenerating, handleStopGeneration]);
 
   // Keyboard shortcuts (⌘K for New Chat, ⌘B for toggle sidebar)
   useEffect(() => {
@@ -121,240 +206,373 @@ export function App() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleNewChat]);
+
+  const handleToggleTheme = useCallback(() => {
+    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
   }, []);
 
-  // Active session object
-  const currentSession = sessions.find((s) => s.id === currentSessionId) || null;
-  const currentMessages = currentSession?.messages || [];
+  const handleSelectSession = useCallback(
+    (id) => {
+      if (isGenerating) {
+        handleStopGeneration();
+      }
+      setCurrentSessionId(id);
+      setIsMobileSidebarOpen(false);
+    },
+    [isGenerating, handleStopGeneration]
+  );
 
-  // Scroll to bottom on new messages
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
-
-  useEffect(() => {
-    scrollToBottom();
-  }, [currentMessages, isGenerating]);
-
-  // Handlers
-  const handleToggleTheme = () => {
-    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
-  };
-
-  const handleNewChat = () => {
-    if (isGenerating && abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      setIsGenerating(false);
-    }
-    const newSession = {
-      id: 'session_' + Date.now(),
-      title: 'New Conversation',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      messages: [],
-    };
-    setSessions((prev) => [newSession, ...prev]);
-    setCurrentSessionId(newSession.id);
-  };
-
-  const handleSelectSession = (id) => {
-    if (isGenerating && abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      setIsGenerating(false);
-    }
-    setCurrentSessionId(id);
-    setIsMobileSidebarOpen(false);
-  };
-
-  const handleRenameSession = (id, newTitle) => {
+  const handleRenameSession = useCallback((id, newTitle) => {
     setSessions((prev) =>
       prev.map((s) => (s.id === id ? { ...s, title: newTitle } : s))
     );
-  };
+  }, []);
 
-  const handlePromptRename = () => {
+  const handlePromptRename = useCallback(() => {
     if (!currentSession) return;
     const nextTitle = window.prompt('Rename conversation:', currentSession.title);
     if (nextTitle && nextTitle.trim()) {
       handleRenameSession(currentSession.id, nextTitle.trim());
     }
-  };
+  }, [currentSession, handleRenameSession]);
 
-  const handleDeleteSession = (id) => {
-    setSessions((prev) => prev.filter((s) => s.id !== id));
-    if (currentSessionId === id) {
-      const remaining = sessions.filter((s) => s.id !== id);
-      setCurrentSessionId(remaining.length > 0 ? remaining[0].id : null);
-    }
-  };
+  const handleDeleteSession = useCallback(
+    (id) => {
+      setSessions((prev) => {
+        const remaining = prev.filter((s) => s.id !== id);
+        if (currentSessionId === id) {
+          setCurrentSessionId(remaining.length > 0 ? remaining[0].id : null);
+        }
+        return remaining;
+      });
+    },
+    [currentSessionId]
+  );
 
-  const handleSaveBackendUrl = (newUrl) => {
+  const handleSaveBackendUrl = useCallback((newUrl) => {
     CONFIG.setBackendUrl(newUrl);
     setBackendUrl(newUrl);
-    refreshBackendModels();
-  };
+  }, []);
 
-  const handleSaveModel = (newModel) => {
+  const handleSaveModel = useCallback((newModel) => {
     CONFIG.setModel(newModel);
     setActiveModel(newModel);
-  };
+  }, []);
 
-  const handleSaveSystemPrompt = (newPrompt) => {
+  const handleSaveSystemPrompt = useCallback((newPrompt) => {
     CONFIG.setSystemPrompt(newPrompt);
     setSystemPrompt(newPrompt);
-  };
+  }, []);
 
-  const handleStopGeneration = () => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
-    }
-    setIsGenerating(false);
-  };
+  /**
+   * Shared streaming execution helper used by Send, Regenerate, and Edit Message.
+   */
+  const executeStreamCompletion = useCallback(
+    async (targetSessionId, aiMsgId, apiMessages) => {
+      setIsGenerating(true);
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+      activeStreamingRef.current = { sessionId: targetSessionId, msgId: aiMsgId };
 
-  // Submit prompt / message
-  const handleSendMessage = async (textToSend) => {
-    const text = typeof textToSend === 'string' ? textToSend : input;
-    if (!text || !text.trim() || isGenerating) return;
-
-    let targetSessionId = currentSessionId;
-    let updatedSessions = [...sessions];
-
-    // Create session if none active
-    if (!targetSessionId || !sessions.some((s) => s.id === targetSessionId)) {
-      const newSession = {
-        id: 'session_' + Date.now(),
-        title: text.slice(0, 36).trim() || 'New Chat',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        messages: [],
-      };
-      targetSessionId = newSession.id;
-      updatedSessions = [newSession, ...sessions];
-      setCurrentSessionId(targetSessionId);
-    }
-
-    const sessionIndex = updatedSessions.findIndex((s) => s.id === targetSessionId);
-    if (sessionIndex === -1) return;
-
-    const userMsg = {
-      id: 'msg_' + Date.now(),
-      role: 'user',
-      content: text,
-      timestamp: new Date().toISOString(),
-    };
-
-    // Auto-update title if it's the first message
-    const isFirstMessage = updatedSessions[sessionIndex].messages.length === 0;
-    if (isFirstMessage) {
-      updatedSessions[sessionIndex].title = text.slice(0, 36).trim() || 'New Chat';
-    }
-
-    // AI placeholder message for streaming
-    const aiMsgId = 'msg_ai_' + (Date.now() + 1);
-    const aiMsg = {
-      id: aiMsgId,
-      role: 'assistant',
-      content: '',
-      timestamp: new Date().toISOString(),
-    };
-
-    updatedSessions[sessionIndex] = {
-      ...updatedSessions[sessionIndex],
-      updatedAt: new Date().toISOString(),
-      messages: [...updatedSessions[sessionIndex].messages, userMsg, aiMsg],
-    };
-
-    setSessions(updatedSessions);
-    setInput('');
-    setIsGenerating(true);
-
-    const controller = new AbortController();
-    abortControllerRef.current = controller;
-
-    // Build payload messages including system prompt
-    const history = updatedSessions[sessionIndex].messages
-      .slice(0, -1)
-      .map((m) => ({
-        role: m.role,
-        content: m.content,
-      }));
-
-    const apiMessages = [
-      { role: 'system', content: systemPrompt || SYSTEM_PROMPTS.unrestricted },
-      ...history,
-    ];
-
-    try {
-      await streamChatCompletion(
-        backendUrl,
-        activeModel,
-        apiMessages,
-        (chunkText) => {
+      try {
+        await streamChatCompletion(
+          backendUrl,
+          activeModel,
+          apiMessages,
+          (chunkText) => {
+            setSessions((prev) =>
+              prev.map((s) => {
+                if (s.id !== targetSessionId) return s;
+                const msgs = [...s.messages];
+                const idx = msgs.findIndex((m) => m.id === aiMsgId);
+                if (idx !== -1) {
+                  const current = msgs[idx];
+                  const nextContent = (current.content || '') + chunkText;
+                  let nextVersions = current.versions;
+                  if (Array.isArray(nextVersions)) {
+                    const verIdx =
+                      typeof current.activeVersion === 'number'
+                        ? current.activeVersion
+                        : nextVersions.length - 1;
+                    nextVersions = [...nextVersions];
+                    nextVersions[verIdx] = nextContent;
+                  }
+                  msgs[idx] = {
+                    ...current,
+                    content: nextContent,
+                    versions: nextVersions,
+                  };
+                }
+                return { ...s, messages: msgs };
+              })
+            );
+          },
+          controller.signal
+        );
+      } catch (err) {
+        if (err.name === 'AbortError') {
+          setSessions((prev) =>
+            prev.map((s) => {
+              if (s.id !== targetSessionId) return s;
+              return {
+                ...s,
+                messages: s.messages.map((m) =>
+                  m.id === aiMsgId ? { ...m, stopped: true } : m
+                ),
+              };
+            })
+          );
+        } else {
           setSessions((prev) =>
             prev.map((s) => {
               if (s.id !== targetSessionId) return s;
               const msgs = [...s.messages];
-              const targetAiIdx = msgs.findIndex((m) => m.id === aiMsgId);
-              if (targetAiIdx !== -1) {
-                msgs[targetAiIdx] = {
-                  ...msgs[targetAiIdx],
-                  content: msgs[targetAiIdx].content + chunkText,
+              const idx = msgs.findIndex((m) => m.id === aiMsgId);
+              if (idx !== -1) {
+                const errMsg =
+                  msgs[idx].content ||
+                  `⚠️ Connection Error: ${
+                    err.message || 'Could not reach backend at ' + backendUrl
+                  }. Check your Gateway URL in Settings (⚙️). If accessing from Vercel, ensure the Cloudflare Tunnel is active.`;
+                msgs[idx] = {
+                  ...msgs[idx],
+                  content: errMsg,
                 };
               }
               return { ...s, messages: msgs };
             })
           );
-        },
-        controller.signal
-      );
-    } catch (err) {
-      if (err.name !== 'AbortError') {
-        setSessions((prev) =>
-          prev.map((s) => {
-            if (s.id !== targetSessionId) return s;
-            const msgs = [...s.messages];
-            const targetAiIdx = msgs.findIndex((m) => m.id === aiMsgId);
-            if (targetAiIdx !== -1) {
-              msgs[targetAiIdx] = {
-                ...msgs[targetAiIdx],
-                content:
-                  msgs[targetAiIdx].content ||
-                  `⚠️ Connection Error: ${err.message || 'Could not reach backend at ' + backendUrl}. Check your Gateway URL in Settings (⚙️). If accessing from Vercel, ensure the Cloudflare Tunnel is active.`,
-              };
-            }
-            return { ...s, messages: msgs };
-          })
-        );
+        }
+      } finally {
+        activeStreamingRef.current = { sessionId: null, msgId: null };
+        abortControllerRef.current = null;
+        setIsGenerating(false);
       }
-    } finally {
-      setIsGenerating(false);
-      abortControllerRef.current = null;
-    }
-  };
+    },
+    [backendUrl, activeModel]
+  );
 
-  const handleRegenerate = (msgIndex) => {
-    if (!currentSession || isGenerating) return;
-    const targetIdx = msgIndex - 1;
-    if (targetIdx >= 0 && currentSession.messages[targetIdx]?.role === 'user') {
-      const userText = currentSession.messages[targetIdx].content;
-      const truncated = currentSession.messages.slice(0, targetIdx);
+  // Submit new user message
+  const handleSendMessage = useCallback(
+    async (textToSend) => {
+      const text = typeof textToSend === 'string' ? textToSend : input;
+      if (!text || !text.trim() || isGenerating) return;
+
+      let targetSessionId = currentSessionId;
+      let updatedSessions = [...sessions];
+
+      if (!targetSessionId || !sessions.some((s) => s.id === targetSessionId)) {
+        const newSession = {
+          id: 'session_' + Date.now(),
+          title: text.slice(0, 36).trim() || 'New Chat',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          messages: [],
+        };
+        targetSessionId = newSession.id;
+        updatedSessions = [newSession, ...sessions];
+        setCurrentSessionId(targetSessionId);
+      }
+
+      const sessionIndex = updatedSessions.findIndex((s) => s.id === targetSessionId);
+      if (sessionIndex === -1) return;
+
+      const userMsg = {
+        id: 'msg_' + Date.now(),
+        role: 'user',
+        content: text,
+        timestamp: new Date().toISOString(),
+      };
+
+      if (updatedSessions[sessionIndex].messages.length === 0) {
+        updatedSessions[sessionIndex].title = text.slice(0, 36).trim() || 'New Chat';
+      }
+
+      const aiMsgId = 'msg_ai_' + (Date.now() + 1);
+      const aiMsg = {
+        id: aiMsgId,
+        role: 'assistant',
+        content: '',
+        versions: [''],
+        activeVersion: 0,
+        timestamp: new Date().toISOString(),
+      };
+
+      updatedSessions[sessionIndex] = {
+        ...updatedSessions[sessionIndex],
+        updatedAt: new Date().toISOString(),
+        messages: [...updatedSessions[sessionIndex].messages, userMsg, aiMsg],
+      };
+
+      isNearBottomRef.current = true;
+      setSessions(updatedSessions);
+      setInput('');
+
+      const history = updatedSessions[sessionIndex].messages
+        .slice(0, -1)
+        .map((m) => ({ role: m.role, content: m.content }));
+
+      const apiMessages = [
+        { role: 'system', content: systemPrompt || SYSTEM_PROMPTS.unrestricted },
+        ...history,
+      ];
+
+      await executeStreamCompletion(targetSessionId, aiMsgId, apiMessages);
+    },
+    [input, isGenerating, currentSessionId, sessions, systemPrompt, executeStreamCompletion]
+  );
+
+  // Regenerate assistant response (preserves previous versions for < 1 / 2 > switching)
+  const handleRegenerate = useCallback(
+    async (msgIndex) => {
+      if (!currentSession || isGenerating) return;
+      const targetMsg = currentSession.messages[msgIndex];
+      if (!targetMsg || targetMsg.role !== 'assistant') return;
+
+      // Context includes all messages up to (but excluding) this assistant message
+      const contextMessages = currentSession.messages.slice(0, msgIndex);
+      if (contextMessages.length === 0) return;
+
+      const existingVersions = Array.isArray(targetMsg.versions)
+        ? [...targetMsg.versions]
+        : [targetMsg.content || ''];
+      const newVersionIdx = existingVersions.length;
+      existingVersions.push('');
+
+      const updatedMsg = {
+        ...targetMsg,
+        content: '',
+        stopped: false,
+        feedback: null,
+        versions: existingVersions,
+        activeVersion: newVersionIdx,
+        timestamp: new Date().toISOString(),
+      };
+
+      // Keep conversation up to this regenerated message
+      const nextMessages = [...contextMessages, updatedMsg];
+
       setSessions((prev) =>
         prev.map((s) =>
-          s.id === currentSession.id ? { ...s, messages: truncated } : s
+          s.id === currentSession.id
+            ? { ...s, updatedAt: new Date().toISOString(), messages: nextMessages }
+            : s
         )
       );
-      handleSendMessage(userText);
-    }
-  };
 
-  const handleOpenArtifact = (code) => {
+      const apiMessages = [
+        { role: 'system', content: systemPrompt || SYSTEM_PROMPTS.unrestricted },
+        ...contextMessages.map((m) => ({ role: m.role, content: m.content })),
+      ];
+
+      await executeStreamCompletion(currentSession.id, updatedMsg.id, apiMessages);
+    },
+    [currentSession, isGenerating, systemPrompt, executeStreamCompletion]
+  );
+
+  // Edit previous user message and regenerate from that point
+  const handleEditMessage = useCallback(
+    async (msgIndex, newText) => {
+      if (!currentSession || isGenerating) return;
+      const targetUserMsg = currentSession.messages[msgIndex];
+      if (!targetUserMsg || targetUserMsg.role !== 'user') return;
+
+      const priorMessages = currentSession.messages.slice(0, msgIndex);
+      const updatedUserMsg = {
+        ...targetUserMsg,
+        content: newText,
+        timestamp: new Date().toISOString(),
+      };
+
+      const aiMsgId = 'msg_ai_' + Date.now();
+      const aiMsg = {
+        id: aiMsgId,
+        role: 'assistant',
+        content: '',
+        versions: [''],
+        activeVersion: 0,
+        timestamp: new Date().toISOString(),
+      };
+
+      const nextMessages = [...priorMessages, updatedUserMsg, aiMsg];
+
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.id === currentSession.id
+            ? {
+                ...s,
+                title: msgIndex === 0 ? newText.slice(0, 36).trim() : s.title,
+                updatedAt: new Date().toISOString(),
+                messages: nextMessages,
+              }
+            : s
+        )
+      );
+
+      const apiMessages = [
+        { role: 'system', content: systemPrompt || SYSTEM_PROMPTS.unrestricted },
+        ...[...priorMessages, updatedUserMsg].map((m) => ({
+          role: m.role,
+          content: m.content,
+        })),
+      ];
+
+      await executeStreamCompletion(currentSession.id, aiMsgId, apiMessages);
+    },
+    [currentSession, isGenerating, systemPrompt, executeStreamCompletion]
+  );
+
+  // Switch between regenerated versions of an assistant message
+  const handleSelectVersion = useCallback(
+    (msgIndex, versionIdx) => {
+      if (!currentSession || isGenerating) return;
+      setSessions((prev) =>
+        prev.map((s) => {
+          if (s.id !== currentSession.id) return s;
+          const msgs = [...s.messages];
+          const msg = msgs[msgIndex];
+          if (!msg || !Array.isArray(msg.versions) || !msg.versions[versionIdx]) {
+            return s;
+          }
+          msgs[msgIndex] = {
+            ...msg,
+            activeVersion: versionIdx,
+            content: msg.versions[versionIdx],
+          };
+          return { ...s, messages: msgs };
+        })
+      );
+    },
+    [currentSession, isGenerating]
+  );
+
+  // Persist like/dislike feedback
+  const handleFeedback = useCallback(
+    (msgId, feedbackValue) => {
+      if (!currentSession) return;
+      setSessions((prev) =>
+        prev.map((s) => {
+          if (s.id !== currentSession.id) return s;
+          return {
+            ...s,
+            messages: s.messages.map((m) =>
+              m.id === msgId ? { ...m, feedback: feedbackValue } : m
+            ),
+          };
+        })
+      );
+    },
+    [currentSession]
+  );
+
+  const handleOpenArtifact = useCallback((title, code) => {
     setArtifact({
       isOpen: true,
-      title: 'Code Artifact',
-      code,
+      title: title || 'Code Artifact',
+      code: code || '',
     });
-  };
+  }, []);
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-light-app dark:bg-dark-app text-neutral-900 dark:text-neutral-100 transition-colors duration-200 font-sans">
@@ -389,23 +607,46 @@ export function App() {
         />
 
         {/* Scrollable Chat Message Area */}
-        <div className="flex-1 overflow-y-auto px-4 py-6 scroll-smooth">
+        <div
+          ref={scrollContainerRef}
+          onScroll={handleScroll}
+          className="flex-1 overflow-y-auto px-4 py-6 relative"
+        >
           {currentMessages.length === 0 ? (
             <WelcomeScreen onSelectPrompt={(prompt) => handleSendMessage(prompt)} />
           ) : (
-            <div className="max-w-3xl mx-auto space-y-6 pb-4">
+            <div className="max-w-3xl mx-auto space-y-6 pb-6">
               {currentMessages.map((msg, idx) => (
                 <ChatMessage
                   key={msg.id || idx}
                   message={msg}
-                  isLatestAssistant={idx === currentMessages.length - 1 && msg.role === 'assistant'}
-                  isStreaming={isGenerating && idx === currentMessages.length - 1 && msg.role === 'assistant'}
-                  onRegenerate={() => handleRegenerate(idx)}
+                  messageIndex={idx}
+                  isLatestAssistant={
+                    idx === currentMessages.length - 1 && msg.role === 'assistant'
+                  }
+                  isStreaming={isGenerating}
+                  isAnyGenerating={isGenerating}
+                  onRegenerate={handleRegenerate}
+                  onEditMessage={handleEditMessage}
+                  onSelectVersion={handleSelectVersion}
+                  onFeedback={handleFeedback}
                   onOpenArtifact={handleOpenArtifact}
                 />
               ))}
-              <div ref={messagesEndRef} />
             </div>
+          )}
+
+          {/* Scroll to bottom floating pill when scrolled up */}
+          {showScrollButton && (
+            <button
+              type="button"
+              onClick={() => scrollToBottom('smooth')}
+              className="sticky bottom-4 left-1/2 -translate-x-1/2 z-20 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-light-surface dark:bg-dark-surface border border-light-border dark:border-dark-border shadow-lg text-neutral-700 dark:text-neutral-200 hover:border-claude-coral transition-all"
+              title="Scroll to bottom"
+            >
+              <ArrowDown className="w-3.5 h-3.5" />
+              <span>Scroll to bottom</span>
+            </button>
           )}
         </div>
 

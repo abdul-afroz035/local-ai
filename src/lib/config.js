@@ -1,4 +1,4 @@
-export const ACTIVE_TUNNEL_URL = 'https://locate-convergence-pace-pine.trycloudflare.com';
+export const ACTIVE_TUNNEL_URL = 'https://accommodate-manufacturers-element-encourage.trycloudflare.com';
 export const LOCAL_BACKEND_URL = 'http://127.0.0.1:11434';
 
 export const PRESET_SYSTEM_PROMPTS = {
@@ -16,6 +16,19 @@ export const SYSTEM_PROMPTS = PRESET_SYSTEM_PROMPTS;
 
 export const CONFIG = {
   getBackendUrl() {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const gatewayParam = params.get('gateway');
+      if (gatewayParam) {
+        const clean = gatewayParam.replace(/\/+$/, '');
+        localStorage.setItem('backend_url', clean);
+        params.delete('gateway');
+        const newUrl = window.location.pathname + (params.toString() ? `?${params.toString()}` : '');
+        window.history.replaceState({}, '', newUrl);
+        return clean;
+      }
+    }
+
     const isLocalhost = typeof window !== 'undefined' && 
       (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
     

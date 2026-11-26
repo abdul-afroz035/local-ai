@@ -20,8 +20,21 @@ else
     echo "✅ Ollama is already running on port 11434."
 fi
 
-# 2. Check & Start Cloudflare Quick Tunnel
+# 2. Check & Start Cloudflare Quick Tunnel (restart if missing or returning 530/error)
+NEED_TUNNEL_START=false
 if ! pgrep -x "cloudflared" > /dev/null; then
+    NEED_TUNNEL_START=true
+else
+    EXISTING_URL=$(grep -a -o 'https://[a-zA-Z0-9-]\+\.trycloudflare\.com' /tmp/tunnel.log 2>/dev/null | tail -n 1)
+    if [ -z "$EXISTING_URL" ] || ! curl -sf --max-time 5 "$EXISTING_URL/api/tags" > /dev/null 2>&1; then
+        echo "⚠️  Existing Cloudflare Tunnel is unhealthy. Restarting..."
+        pkill -x "cloudflared" 2>/dev/null
+        sleep 1
+        NEED_TUNNEL_START=true
+    fi
+fi
+
+if [ "$NEED_TUNNEL_START" = true ]; then
     echo "Starting Cloudflare Secure Tunnel..."
     rm -f /tmp/tunnel.log
     nohup /opt/homebrew/bin/cloudflared tunnel --protocol http2 --url http://127.0.0.1:11434 > /tmp/tunnel.log 2>&1 &

@@ -1,4 +1,4 @@
-export const ACTIVE_TUNNEL_URL = 'https://accommodate-manufacturers-element-encourage.trycloudflare.com';
+export const ACTIVE_TUNNEL_URL = 'https://throwing-budapest-sudden-phenomenon.trycloudflare.com';
 export const LOCAL_BACKEND_URL = 'http://127.0.0.1:11434';
 
 export const PRESET_SYSTEM_PROMPTS = {
